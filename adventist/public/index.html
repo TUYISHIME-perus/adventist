@@ -72,8 +72,6 @@
             
             background-repeat: no-repeat;
             background-size: cover;
-            
-            
         }
        .home{
             height: 100%;
@@ -166,7 +164,7 @@
             width:100%;
             padding: 0%;
             margin-top: 0;
-            
+        
       }
       @media (max-width: 1100px){
           nav{
@@ -267,10 +265,21 @@
             }, 8000);
         }
 
-        function loadHomeMessages() {
+        async function fetchDashboard() {
             try {
-                const saved = localStorage.getItem(messageKey);
-                const dashboard = saved ? JSON.parse(saved) : null;
+                const res = await fetch('/api/dashboard', { credentials: 'same-origin' });
+                if (!res.ok) return null;
+                const body = await res.json();
+                return body && body.dashboard ? body.dashboard : null;
+            } catch (e) {
+                return null;
+            }
+        }
+
+        async function loadHomeMessages() {
+            try {
+                const serverDashboard = await fetchDashboard();
+                const dashboard = serverDashboard || JSON.parse(localStorage.getItem(messageKey) || 'null');
                 const messages = dashboard && Array.isArray(dashboard.homeMessages)
                     ? dashboard.homeMessages
                     : [];
@@ -344,8 +353,8 @@
             mediaError.hidden = true;
 
             try {
-                const saved = localStorage.getItem(messageKey);
-                const dashboard = saved ? JSON.parse(saved) : null;
+                const serverDashboard = await fetchDashboard();
+                const dashboard = serverDashboard || JSON.parse(localStorage.getItem(messageKey) || 'null');
                 const photos = dashboard && Array.isArray(dashboard.homePhotos)
                     ? dashboard.homePhotos.filter(photo => typeof photo === "string" && photo.startsWith("data:image/"))
                     : [];

@@ -221,6 +221,8 @@
   </section>
 </main>
 
+<section style="display:none" id="server-availability"></section>
+
 <script src="auth.js"></script>
 <script>
   // Each dashboard file needs its own KEY so saved data never mixes.
@@ -254,6 +256,36 @@
   const $ = id => document.getElementById(id);
   const nameOf = k => state.names[k] || SECTIONS[k].name;
 
+  // ---- server helpers ----
+  async function fetchDashboardFromServer() {
+    try {
+      const res = await fetch('/api/dashboard', { credentials: 'same-origin' });
+      if (!res.ok) return null;
+      const body = await res.json();
+      return body && body.dashboard ? body.dashboard : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  async function saveDashboardToServer(obj) {
+    try {
+      const res = await fetch('/api/dashboard', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(obj)
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || 'Unable to save to server');
+      }
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
   // ---- storage ----
   function setStatus(text, cls) { $("status").textContent = text; $("status").className = "status " + (cls || ""); }
   $("signOut").addEventListener("click", async () => {
@@ -267,6 +299,7 @@
       window.location.assign("admin.html");
     }
   });
+
   function normalize(saved) {
     if (!saved || typeof saved !== "object" || Array.isArray(saved)) {
       throw new Error("Dashboard data must be a JSON object.");
@@ -320,13 +353,24 @@
           : `import-${section}-${Date.now()}-${index}`
       }));
   }
-  function load() {
-    try {
-      const saved = localStorage.getItem(KEY);
-      if (saved) normalize(JSON.parse(saved));
-    } catch (e) {
-      setStatus("Unable to read saved dashboard data.", "bad");
+
+  async function load() {
+    // Try server first
+    let serverData = null;
+    try { serverData = await fetchDashboardFromServer(); } catch (e) { serverData = null; }
+
+    if (serverData) {
+      try { normalize(serverData); } catch (e) { setStatus('Unable to normalize server dashboard data.', 'bad'); }
+    } else {
+      // Fallback to browser-stored data
+      try {
+        const saved = localStorage.getItem(KEY);
+        if (saved) normalize(JSON.parse(saved));
+      } catch (e) {
+        setStatus("Unable to read saved dashboard data.", "bad");
+      }
     }
+
     state.weeklyStudies.forEach((teacher, index) => {
       $("weeklyTeacher" + (index + 1)).value = teacher;
     });
@@ -338,21 +382,34 @@
       preview.hidden = !photo;
     });
   }
-  function save() {
+
+  async function save() {
     try {
       localStorage.setItem(KEY, JSON.stringify(state));
       setStatus("Saved " + new Date().toLocaleTimeString(), "ok");
-      return true;
     } catch (e) {
       setStatus('Browser storage is full or unavailable. Use "Save now" to download your dashboard data.', "bad");
-      return false;
     }
+
+    // Try save to server if admin
+    try {
+      if (window.CampusAuth && CampusAuth.hasSession()) {
+        const ok = await saveDashboardToServer(state);
+        if (ok) setStatus("Saved to server", "ok");
+        else setStatus("Saved locally; unable to save to server.", "bad");
+      }
+    } catch (e) {
+      // ignore server save errors; local save still works
+    }
+    return true;
   }
   // "Save now": saves in the browser; if that is blocked, downloads a data file instead.
   $("saveNow").onclick = () => {
     if (save()) return;
     $("exportBtn").click();
   };
+
+  // ... rest of file unchanged until export/import ...
   $("homeMessagesForm").addEventListener("submit", event => {
     event.preventDefault();
     state.homeMessages = [
@@ -400,7 +457,7 @@
         preview.src = photo;
         preview.hidden = !photo;
       });
-      save();
+      await save();
     } catch (error) {
       setStatus(error.message || "Unable to process the selected photos.", "bad");
     }
@@ -664,12 +721,12 @@
     const file = ev.target.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
       try {
         const d = JSON.parse(reader.result);
         if (!d || typeof d !== "object" || Array.isArray(d) ||
             (!d.data && !Array.isArray(d.entries))) throw new Error("bad");
-        normalize(d); save(); render();
+        normalize(d); await save(); render();
       } catch (e) { setStatus("That file is not a valid dashboard data file.", "bad"); }
     };
     reader.readAsText(file);
