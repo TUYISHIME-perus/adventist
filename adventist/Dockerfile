@@ -1,26 +1,31 @@
 FROM node:20-bullseye-slim
 
 # Install build deps required for native modules (better-sqlite3)
-RUN apt-get update && \
-  apt-get install -y --no-install-recommends build-essential python3 ca-certificates && \
-  rm -rf /var/lib/apt/lists/*
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends build-essential python3 ca-certificates curl \
+  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy package.json only so we can run npm install without relying on a lockfile
-COPY adventist/package.json ./
+# Copy package metadata and install production deps (npm install is used to avoid lockfile mismatch failures)
+COPY adventist/package.json ./package.json
+RUN npm install --production --no-audit --no-fund
 
-# Install production dependencies
-RUN npm install --production
-
-# Copy app code
+# Copy app source
 COPY adventist/ ./
 
-# Copy .env if present in the repo (used for quick deployments). Platforms should set env vars securely instead.
-ARG COPY_ENV=true
-COPY adventist/.env ./ .
+# Create a non-root user and give ownership of the app directory
+RUN useradd --create-home --shell /usr/sbin/nologin appuser \
+  && chown -R appuser:appuser /app
 
-ENV PORT=4010
+ENV NODE_ENV=production
+
+# Run as non-root user
+USER appuser
+
 EXPOSE 4010
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:4010/api/session || exit 1
 
 CMD ["node", "server.js"]
