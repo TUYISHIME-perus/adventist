@@ -8,11 +8,13 @@ RUN apt-get update \
 WORKDIR /app
 
 # Copy package metadata and install production deps (npm install is used to avoid lockfile mismatch failures)
-COPY adventist/package.json ./package.json
+# Note: COPY paths are relative to the Docker build context. When Render's "Root Directory" is set to the adventist/ folder,
+# the build context is that folder so we should COPY from the current context (no extra adventist/ prefix).
+COPY package.json ./package.json
 RUN npm install --production --no-audit --no-fund
 
-# Copy app source
-COPY adventist/ ./
+# Copy app source (current build context) into the image
+COPY . ./
 
 # Create a non-root user and give ownership of the app directory
 RUN useradd --create-home --shell /usr/sbin/nologin appuser \
