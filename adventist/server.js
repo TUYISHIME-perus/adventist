@@ -21,6 +21,15 @@ const MIME_TYPES = new Map([
   [".webp", "image/webp"]
 ]);
 
+// Add database-backed settings storage
+let db;
+try {
+  db = require('./db');
+} catch (err) {
+  // If DB is not available (fresh clone without deps), log a warning and continue.
+  console.warn('Database module not available. Install dependencies and restart to enable server-backed storage.');
+}
+
 function passwordRecord(password) {
   const salt = crypto.randomBytes(16).toString("hex");
   const hash = crypto.scryptSync(password, salt, 64).toString("hex");
@@ -146,11 +155,39 @@ function createAppServer(options = {}) {
   }
 
   function handleApi(request, response, url) {
+    // Public session check
     if (request.method === "GET" && url.pathname === "/api/session") {
       sendJson(response, 200, { authenticated: Boolean(sessionFor(request)) });
       return true;
     }
 
+    // Dashboard: read-only for public, write requires admin session
+    if (request.method === "GET" && url.pathname === "/api/dashboard") {
+      try {
+        const dashboard = db ? db.getDashboard() : null;
+        sendJson(response, 200, { dashboard });
+      } catch (err) {
+        sendJson(response, 500, { error: "Unable to read dashboard data." });
+      }
+      return true;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/dashboard") {
+      if (!sessionFor(request)) { sendJson(response, 401, { error: "Sign in to update the dashboard." }); return true; }
+      readJson(request).then(data => {
+        if (!data || typeof data !== 'object' || Array.isArray(data)) { sendJson(response, 400, { error: 'Send a valid dashboard object.' }); return; }
+        try {
+          if (!db) { sendJson(response, 500, { error: 'Database not configured.' }); return; }
+          db.setDashboard(data);
+          sendJson(response, 200, { ok: true });
+        } catch (err) { sendJson(response, 500, { error: 'Unable to save dashboard data.' }); }
+      }).catch(error => {
+        sendJson(response, error.statusCode || 400, { error: error.message });
+      });
+      return true;
+    }
+
+    // Keep existing authentication endpoints
     if (request.method !== "POST" || !["/api/login", "/api/logout", "/api/change-password"].includes(url.pathname)) {
       return false;
     }
@@ -293,7 +330,7 @@ function createAppServer(options = {}) {
         if (error.code === "ENOENT" && path.basename(filePath) === "church-logo.jpg") {
           const jpeg = Buffer.from(
             // 1x1 white JPEG
-            "/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDAREAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAb/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAH/AP/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAQUC/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAwEBPwF//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAgEBPwF//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQAGPwJ//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPyF//9k=",
+            "/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf////////////////////////////////////////////////////////[...]",
             "base64"
           );
           response.writeHead(200, {

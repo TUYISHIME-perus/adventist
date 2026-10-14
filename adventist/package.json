@@ -10,5 +10,8 @@
     "start": "node server.js",
     "dev": "node --env-file=.env server.js",
     "test": "node --test"
+  },
+  "dependencies": {
+    "better-sqlite3": "^8.3.0"
   }
 }
