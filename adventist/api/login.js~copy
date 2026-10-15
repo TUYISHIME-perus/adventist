@@ -1,0 +1,29 @@
+const { parseJsonBody, ensureAdminRecord, getValue, setValue } = require('./_helpers');
+const crypto = require('crypto');
+const COOKIE_NAME = 'campus_session';
+
+module.exports = async (req, res) => {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  try{
+    const body = await parseJsonBody(req);
+    const email = (body.email || '').trim().toLowerCase();
+    const password = body.password || '';
+    const adminEmail = (process.env.ADMIN_EMAIL || '').trim().toLowerCase();
+    if (!adminEmail) return res.status(500).json({ error: 'ADMIN_EMAIL not configured' });
+    const creds = await ensureAdminRecord();
+    if (email !== adminEmail) return res.status(401).json({ error: 'Incorrect email or password' });
+    const ok = creds && (function(){
+      try{ const actual = crypto.scryptSync(password, creds.salt, 64); return actual.equals(Buffer.from(creds.hash, 'hex')); }catch(e){return false}
+    })();
+    if (!ok) return res.status(401).json({ error: 'Incorrect email or password' });
+
+    const token = crypto.randomBytes(32).toString('hex');
+    const session = { email: adminEmail, created: Date.now(), expires: Date.now() + (8*60*60*1000) };
+    await setValue('session:'+token, JSON.stringify(session));
+
+    const secure = process.env.COOKIE_SECURE === 'true';
+    const cookie = `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${8*60*60}` + (secure ? '; Secure' : '');
+    res.setHeader('Set-Cookie', cookie);
+    return res.status(200).json({ ok: true });
+  }catch(err){ console.error('login err', err); return res.status(500).json({ error: 'Unable to process login' }); }
+};
